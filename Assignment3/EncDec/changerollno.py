@@ -2,15 +2,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from torchvision.transforms import Grayscale
 from torch.autograd import Variable
 import os
 import random
 from EncDec import *
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
-
-torch.autograd.set_detect_anomaly(True)
 
 
 class AlteredMNIST(torch.utils.data.Dataset):
@@ -29,7 +26,7 @@ class AlteredMNIST(torch.utils.data.Dataset):
         self.root = root
         self.aug = os.path.join(root, "aug/")
         self.clean = os.path.join(root, "clean/")
-        self.aug_paths = (os.listdir(self.aug)[:-3000] if not val else os.listdir(self.aug)[-3000:])
+        self.aug_paths = (os.listdir(self.aug))
         self.aug_len = len(self.aug_paths)
         self.clean_len = len(os.listdir(self.clean))
 
@@ -120,14 +117,18 @@ class Encoder(nn.Module):
     def __init__(self,in_channels=1,out_channels=16):
         super(Encoder, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 2, kernel_size=4, stride=2, padding=1, bias=True)
+
         self.block1 = EncoderBlock(2, 4, 3, 2, 2)
         self.block2 = EncoderBlock(4, 8, 3, 2, 1)
         self.block3 = EncoderBlock(8, out_channels, 2, 1, 0)
         self.block4 = EncoderBlock(out_channels, out_channels, 3, 1, 1)
+
         self.fc_mu = nn.Linear(out_channels*3*3,out_channels)
         self.fc_logvar = nn.Linear(out_channels*3*3,out_channels)
+
         self.elu = nn.ELU()
         self.selu = nn.SELU()
+
         self.fc1 = nn.Linear(out_channels*3*3 + 10, 64)
         self.fc2 = nn.Linear(64, out_channels)
         self.fc3 = nn.Linear(64, out_channels)
@@ -148,6 +149,7 @@ class Encoder(nn.Module):
             x_ = x.view(x.shape[0],-1)
             mu = self.fc_mu(x_)
             logvar = self.fc_logvar(x_)
+
             if CVAE:
                 targets = one_hot(label,10).to(x_.device)
                 inputs = torch.cat((x_,targets),dim=1)
@@ -156,10 +158,12 @@ class Encoder(nn.Module):
                 z_logvar = self.fc3(h1)
                 self.z_mu = z_mu
                 self.z_logvar = z_logvar
-                return x, self.reparametrize(VAE,CVAE), z_mu, z_logvar
+                return self.reparametrize(VAE,CVAE), z_mu, z_logvar
+            
             self.mu = mu
             self.logvar = logvar
-            return x, self.reparametrize(VAE,CVAE), mu, logvar
+            return self.reparametrize(VAE,CVAE), mu, logvar
+        
         return x
     
     def reparametrize(self, VAE=False, CVAE=False):
@@ -173,17 +177,19 @@ class Encoder(nn.Module):
             return eps.mul_(std).add_(self.z_mu)
         else:
             return None
-    
+            
 
 class DecoderBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride, padding):
         super().__init__()
         self.conv1 = nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding, bias=True)
         self.bn1 = nn.BatchNorm2d(out_channels)
+
         self.conv2 = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         self.conv3 = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         self.conv4 = nn.ConvTranspose2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         self.bn2 = nn.BatchNorm2d(out_channels)
+
         self.upsample = nn.Sequential(
             nn.ConvTranspose2d(in_channels, in_channels, 3, 1, 1, bias=True),
             nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride, padding, bias=True),
@@ -214,14 +220,18 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.fc_cvae = nn.Linear(in_channels+10, in_channels*3*3)
         self.fc_vae = nn.Linear(in_channels, in_channels*3*3)
+
         self.elu = nn.ELU()
         self.selu = nn.SELU()
+
         self.conv1 = nn.ConvTranspose2d(in_channels, in_channels, kernel_size=4, stride=2, padding=1, bias=True)
+
         self.block1 = DecoderBlock(in_channels, 8, 3, 2, 1)
         self.block2 = DecoderBlock(8, 4, 3, 2, 0)
         self.block3 = DecoderBlock(4, 2, 4, 1, 0)
-        self.block4 = DecoderBlock(2, 2, 3, 1, 1)
-        self.conv3 = nn.ConvTranspose2d(2, out_channels, kernel_size=3, stride=1, padding=0, bias=True)
+        self.block4 = DecoderBlock(2, 2, 3, 1, 0)
+
+        self.conv3 = nn.ConvTranspose2d(2, out_channels, kernel_size=3, stride=1, padding=1, bias=True)
         self.sigmoid = nn.Sigmoid()
     
     def forward(self, x, label=None, VAE=False, CVAE=False):
@@ -233,6 +243,7 @@ class Decoder(nn.Module):
             else:
                 x = self.elu(self.fc_vae(x))
             x = x.view(x.size(0),-1,3,3)
+
         x = self.conv1(x)
         x = self.selu(x)
         x = self.block1(x)
@@ -250,7 +261,7 @@ class AELossFn(nn.Module):
     """
     def __init__(self, reduction:str = 'mean'):
         super(AELossFn, self).__init__()
-        self.bceloss = nn.BCELoss()
+        self.bceloss = nn.BCEWithLogitsLoss()
         self.mseloss = nn.MSELoss()
         self.reduction = reduction
     
@@ -259,7 +270,7 @@ class AELossFn(nn.Module):
         targets = targets.clone().requires_grad_(True)
         logits = logits.view(logits.shape[0],-1)
         targets = targets.view(targets.shape[0],-1)
-        loss = 0.2*(self.bceloss(logits,targets)) + 0.8*(self.mseloss(logits, targets))
+        loss = 0.1*(self.bceloss(logits,targets)) + 0.9*(self.mseloss(logits,targets))
         return loss
 
 
@@ -269,7 +280,7 @@ class VAELossFn(nn.Module):
     """  
     def __init__(self, reduction:str = 'mean'):
         super(VAELossFn, self).__init__()
-        self.bceloss = nn.BCELoss()
+        self.bceloss = nn.BCEWithLogitsLoss()
         self.mseloss = nn.MSELoss()
         self.reduction = reduction
 
@@ -278,8 +289,8 @@ class VAELossFn(nn.Module):
         targets = targets.clone().requires_grad_(True)
         logits = logits.view(logits.shape[0],-1)
         targets = targets.view(targets.shape[0],-1)
-        reconstruct_loss = 0.2*(self.bceloss(logits, targets)) + 0.8*(self.mseloss(logits, targets))
-        KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        reconstruct_loss = (self.mseloss(logits, targets))
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow_(2) - logvar.exp_())
         return reconstruct_loss + KLD
 
 
@@ -304,13 +315,21 @@ def plot_tsne(logits,epoch,labels=None,VAE=False,CVAE=False):
 def save_checkpoint(encoder, decoder, path):
     torch.save({
         'encoder_state_dict': encoder.state_dict(),
-        'decoder_state_dict': decoder.state_dict()
+        'decoder_state_dict': decoder.state_dict(),
+        'mu' : encoder.mu,
+        'logvar' : encoder.logvar,
+        'z_mu' : encoder.z_mu,
+        'z_logvar' : encoder.z_logvar
     }, path)
 
 def load_checkpoint(encoder, decoder, path):
     checkpoint = torch.load(path)
     encoder.load_state_dict(checkpoint['encoder_state_dict'])
     decoder.load_state_dict(checkpoint['decoder_state_dict'])
+    encoder.mu = checkpoint['mu']
+    encoder.logvar = checkpoint['logvar']
+    encoder.z_mu = checkpoint['z_mu']
+    encoder.z_logvar = checkpoint['z_logvar']
     return encoder, decoder
 
 
@@ -330,7 +349,6 @@ class AETrainer:
         self.data_loader = data_loader
         self.encoder = encoder
         self.decoder = decoder
-        self.gpu = gpu
         self.device = ('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu') if (gpu=='T' or gpu==True) else 'cpu'
         self.encoder.to(self.device)
         self.decoder.to(self.device)
@@ -425,11 +443,11 @@ class VAETrainer:
 
             for minibatch, (data, target, labels) in enumerate(self.data_loader):
                 data, target = data.to(self.device), target.to(self.device)
-                logits,reparam,mu,logvar = self.encoder(data,VAE=True)
+                reparam,mu,logvar = self.encoder(data,VAE=True)
                 output = self.decoder(reparam,VAE=True)
 
                 if (epoch+1)%10 == 0:
-                    logits_tsne = torch.cat((logits_tsne,logits.clone().cpu().detach()),dim=0)
+                    logits_tsne = torch.cat((logits_tsne,reparam.clone().cpu().detach()),dim=0)
                     labels_tsne = torch.cat((labels_tsne,labels.clone().cpu().detach()),dim=0)
 
                 loss = loss_fn(output, target, mu, logvar)
@@ -451,7 +469,7 @@ class VAETrainer:
 
             for minibatch, (data, target, _) in enumerate(self.data_loader):
                 data, target = data.to(self.device), target.to(self.device)
-                _,reparam,mu,logvar = self.encoder(data,VAE=True)
+                reparam,mu,logvar = self.encoder(data,VAE=True)
                 output = self.decoder(reparam,VAE=True)
 
                 loss = loss_fn(output, target, mu, logvar)
@@ -486,8 +504,8 @@ class AE_TRAINED:
 
     def from_path(self, sample, original, type):
         "Compute similarity score of both 'sample' and 'original' and return in float"
-        sample_img = torchvision.io.read_image(sample).float().div_(255.0).to(self.device)
-        original_img = torchvision.io.read_image(original).float().div_(255.0).to(self.device)
+        sample_img = torchvision.io.read_image(sample).float().div_(255.0)
+        original_img = torchvision.io.read_image(original).float().div_(255.0)
         sample_img = sample_img.unsqueeze(0).to(self.device)
         original_img = original_img.unsqueeze(0).to(self.device)
         logits = self.encoder(sample_img)
@@ -517,11 +535,11 @@ class VAE_TRAINED:
 
     def from_path(self, sample, original, type):
         "Compute similarity score of both 'sample' and 'original' and return in float"
-        sample_img = torchvision.io.read_image(sample).float().div_(255.0).to(self.device)
-        original_img = torchvision.io.read_image(original).float().div_(255.0).to(self.device)
+        sample_img = torchvision.io.read_image(sample).float().div_(255.0)
+        original_img = torchvision.io.read_image(original).float().div_(255.0)
         sample_img = sample_img.unsqueeze(0).to(self.device)
         original_img = original_img.unsqueeze(0).to(self.device)
-        _,reparam,_,_ = self.encoder(sample_img,VAE=True)
+        reparam,_,_ = self.encoder(sample_img,VAE=True)
         output = self.decoder(reparam,VAE=True)
         if type == "SSIM":
             return ssim(output, original_img).item()
@@ -537,16 +555,16 @@ class CVAELossFn(nn.Module):
     """
     def __init__(self, reduction:str = 'mean'):
         super(CVAELossFn, self).__init__()
-        self.reconstruct_loss = nn.BCEWithLogitsLoss()
+        self.bce_loss = nn.BCELoss()
+        self.mse_loss = nn.MSELoss()
         self.reduction = reduction
 
     def forward(self, logits, targets, mu, logvar, label):
         logits = logits.clone().requires_grad_(True)
-        targets = targets.clone().requires_grad_(True)
         logits = logits.view(logits.shape[0],-1)
         targets = targets.view(targets.shape[0],-1)
-        reconstruct_loss = self.reconstruct_loss(logits, targets)
-        KLD = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        reconstruct_loss = 0.1*(self.bce_loss(logits,targets)) + 0.9*(self.mse_loss(logits, targets))
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow_(2) - logvar.exp_())
         return torch.mean((reconstruct_loss + KLD)*label)
 
 
@@ -585,11 +603,11 @@ class CVAE_Trainer:
                 data, target, label = (data.to(self.device),
                                        target.to(self.device),
                                        label.to(self.device))
-                logits,reparam,mu,logvar = self.encoder(data,label,CVAE=True)
+                reparam,mu,logvar = self.encoder(data,label,CVAE=True)
                 output = self.decoder(reparam,label,CVAE=True)
 
                 if (epoch+1)%10 == 0:
-                    logits_tsne = torch.cat((logits_tsne,logits.clone().cpu().detach()),dim=0)
+                    logits_tsne = torch.cat((logits_tsne,reparam.clone().cpu().detach()),dim=0)
                     labels_tsne = torch.cat((labels_tsne,label.clone().cpu().detach()),dim=0)
 
                 loss = loss_fn(output, target, mu, logvar, label)
@@ -611,7 +629,7 @@ class CVAE_Trainer:
 
             for minibatch, (data, target, label) in enumerate(self.data_loader):
                 data, target, label = data.to(self.device), target.to(self.device), label.to(self.device)
-                _,reparam,mu,logvar = self.encoder(data,label,CVAE=True)
+                reparam,mu,logvar = self.encoder(data,label,CVAE=True)
                 output = self.decoder(reparam,label,CVAE=True)
 
                 loss = loss_fn(output, target, mu, logvar, label)
@@ -645,9 +663,15 @@ class CVAE_Generator:
         self.decoder.eval()
 
     def save_image(self, digit, save_path):
+        if self.encoder.z_mu is None:
+            raise Exception("Encoder not trained.")
+        
         z = self.encoder.reparametrize(VAE=False,CVAE=True)
-        output = self.decoder(z,digit,CVAE=True)
-        torchvision.io.write_png(output.squeeze(0),os.path.join(save_path,f"label_{digit}.png"))
+        label = torch.tensor(digit).unsqueeze(0).to(self.device)
+
+        output = self.decoder(z,label,CVAE=True)*255.0
+        output = output.to(torch.uint8)
+        torchvision.io.write_png(output.squeeze(0),os.path.join(save_path,f"CVAE-GeneratedImage_Class-{digit}.png"))
 
 
 def psnr(img1, img2, max_val:float=255.0):
@@ -662,7 +686,7 @@ def ssim(img1, img2):
     if img1.shape[0] != 1: raise Exception("Image of shape [1,H,W] required.")
     channel = 1
     window_size = 11
-    K = [0.03, 0.03]
+    K = [0.02, 0.08]
     C1 = K[0]**2
     C2 = K[1]**2
 
