@@ -491,7 +491,7 @@ def trainer(gpu="F",
             criterion=None,
             optimizer=None):
     
-    device = torch.device("mps") if gpu == "T" else torch.device("cpu")
+    device = torch.device("cuda") if gpu == "T" else torch.device("cpu")
     
     network = network.to(device)
 
@@ -574,9 +574,7 @@ def validator(gpu="F",
               criterion=None,
               optimizer=None):
     
-    device = torch.device("mps") if gpu == "T" else torch.device("cpu")
-    image_dict = torch.load(f'best_model_{network.__class__.__name__}_image.pth')
-    audio_dict = torch.load(f'best_model_{network.__class__.__name__}_audio.pth')
+    device = torch.device("cuda") if gpu == "T" else torch.device("cpu")
     network = network.to(device)
 
     mean = torch.tensor([0.4914, 0.4822, 0.4465]).reshape(1,3,1,1)
@@ -595,7 +593,12 @@ def validator(gpu="F",
         for batch in dataloader:
             data,label = batch
 
+            ext = "image"
+            if(len(data.shape)==3):
+                ext = "audio"
+
             if(len(data.shape)==4):
+                image_dict = torch.load(f'best_model_{network.__class__.__name__}_image.pth')
                 data = (data-mean)/std
                 if(best_loss is None):
                     network.load_state_dict(image_dict['model'])
@@ -603,6 +606,7 @@ def validator(gpu="F",
                     best_acc = image_dict['best_acc']
                     network.train()
             elif(best_loss is None):
+                audio_dict = torch.load(f'best_model_{network.__class__.__name__}_audio.pth')
                 network.load_state_dict(audio_dict['model'])
                 best_loss = audio_dict['best_loss']
                 best_acc = audio_dict['best_acc']
@@ -638,7 +642,7 @@ def validator(gpu="F",
                     'best_loss': best_loss,
                     'best_acc': best_acc
                 }
-                torch.save(save_dict,f'best_model_{network.__class__.__name__}.pth')
+                torch.save(save_dict,f'best_model_{network.__class__.__name__}_{ext}.pth')
 
         if(best_acc>0.85):
             break
@@ -658,15 +662,11 @@ def evaluator(gpu="F",
               criterion=None,
               optimizer=None):
     
-    device = torch.device("mps") if gpu == "T" else torch.device("cpu")
-    image_dict = torch.load(f'best_model_{network.__class__.__name__}_image.pth')
-    audio_dict = torch.load(f'best_model_{network.__class__.__name__}_audio.pth')
+    device = torch.device("cuda") if gpu == "T" else torch.device("cpu")
     network = network.to(device)
 
     mean = torch.tensor([0.4914, 0.4822, 0.4465]).reshape(1,3,1,1)
     std = torch.tensor([0.2023, 0.1994, 0.2010]).reshape(1,3,1,1)
-
-    loaded = False
     
     # Write your code here
     for epoch in range(EPOCH):
@@ -676,17 +676,22 @@ def evaluator(gpu="F",
     correct = 0
     n_samples = 0
 
+    loaded = False
+
     for batch in dataloader:
         data,label = batch
-
-        if(len(data.shape)==4):
-            data = (data-mean)/std
-            if(loaded is None):
+        
+        if(not loaded):
+            if(len(data.shape)==4):
+                image_dict = torch.load(f'best_model_{network.__class__.__name__}_image.pth')
+                data = (data-mean)/std
                 network.load_state_dict(image_dict['model'])
                 network.eval()
-        elif(loaded is None):
-            network.load_state_dict(audio_dict['model'])
-            network.eval()
+            else:
+                audio_dict = torch.load(f'best_model_{network.__class__.__name__}_audio.pth')
+                network.load_state_dict(audio_dict['model'])
+                network.eval()
+            loaded = True
 
         data = data.to(device)
         label = label.to(device)
