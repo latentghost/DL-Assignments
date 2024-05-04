@@ -1102,7 +1102,7 @@ class CVAE_Generator:
 
         output = self.decoder(z,label,CVAE=True)*255.0
         output = output.to(torch.uint8)
-        torchvision.io.write_png(output.cpu().squeeze(0),os.path.join(save_path,f"CVAE-GeneratedImage_Class-{digit}.png"))
+        torchvision.io.write_png(output.squeeze(0),os.path.join(save_path,f"CVAE-GeneratedImage_Class-{digit}.png"))
 
 
 def psnr(img1, img2, max_val:float=255.0):

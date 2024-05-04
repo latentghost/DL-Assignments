@@ -3,7 +3,7 @@ import torch
 import random
 import argparse
 from EncDec import *
-from EncDec.changerollno import *
+from EncDec._2021515A3 import *
 from torch.utils.data import DataLoader
 
 
